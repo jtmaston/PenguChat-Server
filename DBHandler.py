@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime
 from os import makedirs, environ
 
@@ -10,10 +11,7 @@ environ['KIVY_NO_ENV_CONFIG'] = '1'
 environ["KCFG_KIVY_LOG_LEVEL"] = "debug"
 environ["KCFG_KIVY_LOG_DIR"] = path + '/PenguChat/Logs'
 
-from kivy import Logger
-
 db = SqliteDatabase(path + '/Users.db')
-
 
 class User(Model):
     username = CharField(100)
@@ -91,7 +89,7 @@ def login(username, password):
     try:
         query = User.get(User.username == username)
     except User.DoesNotExist:
-        Logger.warning("User not found!")
+        logging.warning("User not found!")
         return False
     else:
         salt = get_salt_for_user(username)
@@ -131,7 +129,7 @@ except OperationalError as t:
     try:
         open(path + '/Users.db', 'r')
     except FileNotFoundError:
-        Logger.warning("Database file missing, re-creating. ")
+        logging.warning("Database file missing, re-creating. ")
         with open(path + '/Users.db', "w+"):
             pass
     db.create_tables([User, MessageCache])
