@@ -4,16 +4,16 @@ from os import makedirs, environ
 import bcrypt
 from appdirs import user_data_dir
 from peewee import *
+from twisted.logger import Logger
 
 path = user_data_dir("PenguChatServer", "aanas")
 environ['KIVY_NO_ENV_CONFIG'] = '1'
 environ["KCFG_KIVY_LOG_LEVEL"] = "debug"
 environ["KCFG_KIVY_LOG_DIR"] = path + '/PenguChat/Logs'
 
-from kivy import Logger
-
 db = SqliteDatabase(path + '/Users.db')
 
+logger = Logger()
 
 class User(Model):
     username = CharField(100)
@@ -91,7 +91,7 @@ def login(username, password):
     try:
         query = User.get(User.username == username)
     except User.DoesNotExist:
-        Logger.warning("User not found!")
+        logger.warn("User not found!")
         return False
     else:
         salt = get_salt_for_user(username)
@@ -131,7 +131,7 @@ except OperationalError as t:
     try:
         open(path + '/Users.db', 'r')
     except FileNotFoundError:
-        Logger.warning("Database file missing, re-creating. ")
+        logger.warn("Database file missing, re-creating. ")
         with open(path + '/Users.db', "w+"):
             pass
     db.create_tables([User, MessageCache])
