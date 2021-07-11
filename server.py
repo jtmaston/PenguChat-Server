@@ -34,7 +34,7 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
 
     def connectionLost(self, reason=connectionDone):
         if self.endpoint_username is not None:
-            Logger.info(self.endpoint_username + " logged out.")
+            logging.info(self.endpoint_username + " logged out.")
             try:
                 del self.factory.connections[self.endpoint_username]
             except KeyError:
@@ -47,9 +47,9 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
         except UnicodeError:
             return
         except Exception as e:
-            Logger.error(f"Tried loading, failed! Reason: {e}")
-            Logger.error(f"Message contents was: {data}")
-            Logger.error("Connection forced closed.")
+            logging.error(f"Tried loading, failed! Reason: {e}")
+            logging.error(f"Message contents was: {data}")
+            logging.error("Connection forced closed.")
             self.transport.loseConnection()
             return
 
@@ -76,7 +76,7 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
                     pass
                 else:
                     self.transport.loseConnection()
-                Logger.info(f"{packet['sender']} logged in.")
+                logging.info(f"{packet['sender']} logged in.")
                 self.factory.connections[packet['sender']] = self
                 self.endpoint_username = packet['sender']
                 cached = get_cached_messages_for_user(packet['sender'])
@@ -141,7 +141,7 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
                 'original_destination': packet['destination'],
                 'timestamp': packet['timestamp'],
             }
-            Logger.info(f"Switching to file transfer mode for user {self.endpoint_username}")
+            logging.info(f"Switching to file transfer mode for user {self.endpoint_username}")
             self.receiving_file = True
             packet['isfile'] = True
             try:
@@ -153,14 +153,14 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
             self.transport.write(get_transportable_data(reply))
 
         elif packet['command'] == 'ready_for_file':
-            Logger.info(f"User {packet['sender']} reports ready to receive file")
+            logging.info(f"User {packet['sender']} reports ready to receive file")
             sender = FileSender()
             sender.CHUNK_SIZE = 2 ** 16
             blob = BytesIO(self.buffer)
             sender.beginFileTransfer(blob, self.factory.connections[packet['sender']].transport)
             self.buffer = b""
             self.outgoing = None
-            Logger.info(f"Finished upload to {packet['sender']}. {blob.getbuffer().nbytes} bytes transferred.")
+            logging.info(f"Finished upload to {packet['sender']}. {blob.getbuffer().nbytes} bytes transferred.")
 
         else:
             reply = {
@@ -184,14 +184,14 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
     def dataReceived(self, data):
         if not self.receiving_file:
             data = data.split('\r\n'.encode())
-            Logger.info(data)
+            logging.info(data)
             for message in data:
                 if message:
                     self.decode_command(message)
         else:
             self.buffer += data
             if self.buffer[-2:] == '\r\n'.encode():
-                Logger.info(f"{self.endpoint_username} finished upload. {getsizeof(self.buffer)} bytes received.")
+                logging.info(f"{self.endpoint_username} finished upload. {getsizeof(self.buffer)} bytes received.")
                 self.receiving_file = False
                 reply = {
                     'command': 'file_received',
@@ -218,5 +218,5 @@ class ServerFactory(Factory):
 
 if __name__ == '__main__':
     reactor.listenTCP(8123, ServerFactory())
-    Logger.info("Server started.")
+    logging.info("Server started.")
     reactor.run()
