@@ -148,7 +148,7 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
             try:
                 f = open(f"{exec_path}/.cache/{packet['filename']}", 'wb+')
             except FileNotFoundError:
-                makedirs('.cache')
+                makedirs(f'{exec_path}/.cache')
                 f = open(f"{exec_path}/.cache/{packet['filename']}", 'wb+')
             packet['content'] = b''
             chunk = sock.recv(CHUNK_SIZE)
