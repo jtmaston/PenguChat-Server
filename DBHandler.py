@@ -60,7 +60,7 @@ def add_message_to_cache(packet):
     MessageCache(
         sender=packet['sender'],
         destination=packet['destination'],
-        content=content,
+        content=str(content).encode() if not isinstance(content, bytes) else content,
         timestamp=packet['timestamp'],
         command=packet['command'],
         isfile=packet['isfile'],
