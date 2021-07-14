@@ -3,6 +3,7 @@
 
 import json
 from base64 import b64decode
+from socket import socket
 
 from Crypto.Cipher import AES
 from pyDH import DiffieHellman
@@ -15,7 +16,7 @@ from twisted.internet.defer import Deferred
 from DBHandler import *
 
 
-def get_transportable_data(packet):  # helper method to get a transportable version of non-encoded data
+def get_transportable_data(packet) -> bytes:  # helper method to get a transportable version of non-encoded data
     return json.dumps(packet).encode()
 
 
@@ -134,15 +135,36 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
                 self.transport.write(get_transportable_data(reply))
 
         elif packet['command'] == 'prepare_for_file':
-            reply = {
+            port = packet['port']
+            CHUNK_SIZE = 8 * 1024
+
+            sock = socket()
+            sock.connect((str(self.factory.connections[packet['sender']].transport.getPeer().host), int(port)))
+            try:
+                f = open(f".cache/{packet['filename']}", 'wb+')
+            except FileNotFoundError:
+                makedirs('.cache')
+                f = open(f".cache/{packet['filename']}", 'wb+')
+            packet['content'] = b''
+            chunk = sock.recv(CHUNK_SIZE)
+            while chunk:
+                f.write(chunk)
+                chunk = sock.recv(CHUNK_SIZE)
+            sock.close()
+            packet['isfile'] = True
+            #add_message_to_cache(packet)
+
+
+            """reply = {
                 'sender': 'SERVER',
                 'command': 'ready_for_file',
                 'original_sender': packet['sender'],
                 'original_destination': packet['destination'],
                 'timestamp': packet['timestamp'],
             }
-            logging.info(f"Switching to file transfer mode for user {self.endpoint_username}")
-            self.receiving_file = True
+            
+            logging.info(f"Opened f{self.fileSoceket.getsockname()[1]} for FT.")
+            #self.receiving_file = True
             packet['isfile'] = True
             try:
                 self.factory.connections[packet['destination']].outgoing = packet
@@ -150,7 +172,7 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
                 add_message_to_cache(packet)
 
             self.outgoing = packet
-            self.transport.write(get_transportable_data(reply))
+            self.transport.write(get_transportable_data(reply))"""
 
         elif packet['command'] == 'ready_for_file':
             logging.info(f"User {packet['sender']} reports ready to receive file")
