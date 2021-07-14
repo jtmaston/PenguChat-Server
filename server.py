@@ -2,6 +2,7 @@
 
 
 import json
+import os
 from base64 import b64decode
 from socket import socket
 
@@ -19,6 +20,9 @@ from DBHandler import *
 def get_transportable_data(packet) -> bytes:  # helper method to get a transportable version of non-encoded data
     return json.dumps(packet).encode()
 
+
+import pathlib
+exec_path = pathlib.Path(__file__).parent.resolve()
 
 class Server(Protocol):  # describes the protocol. compared to the client, the server has relatively little to do
     def __init__(self, factory):
@@ -140,11 +144,12 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
 
             sock = socket()
             sock.connect((str(self.factory.connections[packet['sender']].transport.getPeer().host), int(port)))
+            print((str(self.factory.connections[packet['sender']].transport.getPeer().host)))
             try:
-                f = open(f".cache/{packet['filename']}", 'wb+')
+                f = open(f"{exec_path}/.cache/{packet['filename']}", 'wb+')
             except FileNotFoundError:
                 makedirs('.cache')
-                f = open(f".cache/{packet['filename']}", 'wb+')
+                f = open(f"{exec_path}/.cache/{packet['filename']}", 'wb+')
             packet['content'] = b''
             chunk = sock.recv(CHUNK_SIZE)
             while chunk:
