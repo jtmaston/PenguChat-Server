@@ -6,3 +6,4 @@ git checkout "$branch"
 git pull
 systemctl restart PenguChatServer.service
 systemctl status PenguChatServer.service
+chmod +x Update.sh
