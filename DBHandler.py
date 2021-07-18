@@ -6,7 +6,7 @@ import bcrypt
 from appdirs import user_data_dir
 from peewee import *
 
-path = user_data_dir("PenguChatServer", "aanas")
+path = user_data_dir("PenguChatServer")
 environ['KIVY_NO_ENV_CONFIG'] = '1'
 environ["KCFG_KIVY_LOG_LEVEL"] = "debug"
 environ["KCFG_KIVY_LOG_DIR"] = path + '/PenguChat/Logs'

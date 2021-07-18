@@ -26,7 +26,7 @@ def get_transportable_data(packet) -> bytes:  # helper method to get a transport
 
 import pathlib
 
-exec_path = pathlib.Path(__file__).parent.resolve()
+#exec_path = pathlib.Path(__file__).parent.resolve()
 running = True
 
 
@@ -94,8 +94,16 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
                 if cached:
                     for i in cached:
                         if i['command'] == 'prepare_for_file':
-                            self.check_if_ready(i['sender'], i['destination'],
-                                                i['timestamp'], i['content'], i['filename'])
+                            #self.check_if_ready(i['sender'], i['destination'],
+                                                #i['timestamp'], i['content'], i['filename'])
+                            sock = socket()
+                            sock.bind(("0.0.0.0", 0))
+                            i['address'] = sock.getsockname()[0]
+                            i['port'] = sock.getsockname()[1]
+                            i['content'] = None
+                            print(i)
+                            threading.Thread(target=self.sender_daemon, args=(sock, i,)).start()
+                            self.factory.connections[packet['sender']].transport.write(get_transportable_data(i))
                         else:
                             i['content'] = i['content'].decode()
                             self.factory.connections[packet['sender']].transport.write(get_transportable_data(i))
@@ -160,10 +168,10 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
                 sock = socket()
                 sock.connect((sender_address, int(port)))
                 try:
-                    f = open(f"{exec_path}/.cache/{packet['filename']}", 'wb+')
+                    f = open(f"{path}/cache/{packet['filename']}", 'wb+')
                 except FileNotFoundError:
-                    makedirs(f'{exec_path}/.cache')
-                    f = open(f"{exec_path}/.cache/{packet['filename']}", 'wb+')
+                    makedirs(f'{path}/cache')
+                    f = open(f"{path}/cache/{packet['filename']}", 'wb+')
 
                 chunk = sock.recv(chunk_size)
                 while chunk:
@@ -199,10 +207,15 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
         chunk_size = 8 * 1024
 
         sock.listen()
-        sock.setblocking(False)
 
         outgoing = socket()
-        outgoing.connect(sender)
+        while True:
+            try:
+                outgoing.connect(sender)
+            except ConnectionRefusedError:
+                pass
+            else:
+                break
         print(f"Connected to sender! He is {outgoing.getpeername()}")
 
         while running:
@@ -224,16 +237,31 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
                 return
         return
 
-    def check_if_ready(self, sender, peer, timestamp, data, filename):
-        packet = {
-            'sender': 'SERVER',
-            'destination': peer,
-            'command': 'prepare_for_file',
-            'original_sender': sender,
-            'timestamp': timestamp,
-            'filename': filename
-        }
-        self.factory.connections[peer].buffer = data
+    @staticmethod
+    def sender_daemon(sock, packet):
+        sock.listen()
+        while running:
+            try:
+                client_socket, addr = sock.accept()
+                print(f"Connected to destination! He is {client_socket.getpeername()}")
+            except BlockingIOError:
+                pass
+            else:
+                start = time.time()
+                with open(f"{path}/cache/{packet['filename']}", "rb") as f:
+                    client_socket.sendfile(f, 0)
+                sock.close()
+                client_socket.close()
+                end = time.time()
+                os.remove(f.name)
+                return
+        return
+
+    #def check_if_ready(self, packet):
+
+
+
+
         self.factory.connections[peer].transport.write(get_transportable_data(packet))
 
     def dataReceived(self, data):
