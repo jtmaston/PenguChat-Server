@@ -14,8 +14,8 @@ environ["KCFG_KIVY_LOG_DIR"] = path + '/PenguChat/Logs'
 FORMAT = '%(asctime)-15s %(message)s'
 logging.basicConfig(format=FORMAT, level=logging.INFO)
 
-
 db = SqliteDatabase(path + '/Users.db')
+
 
 class User(Model):
     username = CharField(100)
