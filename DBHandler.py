@@ -11,6 +11,10 @@ environ['KIVY_NO_ENV_CONFIG'] = '1'
 environ["KCFG_KIVY_LOG_LEVEL"] = "debug"
 environ["KCFG_KIVY_LOG_DIR"] = path + '/PenguChat/Logs'
 
+FORMAT = '%(asctime)-15s %(message)s'
+logging.basicConfig(format=FORMAT, level=logging.INFO)
+
+
 db = SqliteDatabase(path + '/Users.db')
 
 class User(Model):
@@ -56,7 +60,7 @@ def add_message_to_cache(packet):
     MessageCache(
         sender=packet['sender'],
         destination=packet['destination'],
-        content=content,
+        content=str(content).encode() if not isinstance(content, bytes) else content,
         timestamp=packet['timestamp'],
         command=packet['command'],
         isfile=packet['isfile'],
