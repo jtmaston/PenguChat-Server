@@ -4,19 +4,16 @@
 import json
 import os
 import threading
-import time
 from base64 import b64decode
-from math import floor
+from io import BytesIO
 from socket import socket
 
 from Crypto.Cipher import AES
 from pyDH import DiffieHellman
 from twisted.internet import reactor
 from twisted.internet.protocol import Protocol, Factory, connectionDone
-from sys import getsizeof
-from io import BytesIO
 from twisted.protocols.basic import FileSender
-from twisted.internet.defer import Deferred
+
 from DBHandler import *
 
 
@@ -24,9 +21,6 @@ def get_transportable_data(packet) -> bytes:  # helper method to get a transport
     return json.dumps(packet).encode()
 
 
-import pathlib
-
-exec_path = pathlib.Path(__file__).parent.resolve()
 running = True
 
 
@@ -52,6 +46,7 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
                 pass
             self.endpoint_username = None
 
+    # noinspection PyArgumentList
     def decode_command(self, data):
         try:
             packet = json.loads(data)
@@ -82,7 +77,7 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
             password = cipher.decrypt_and_verify(encrypted, tag)
             if login(packet['sender'], password):
                 try:
-                    t = self.factory.connections[packet['sender']]
+                    self.factory.connections[packet['sender']]
                 except KeyError:
                     pass
                 else:
@@ -94,8 +89,16 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
                 if cached:
                     for i in cached:
                         if i['command'] == 'prepare_for_file':
-                            self.check_if_ready(i['sender'], i['destination'],
-                                                i['timestamp'], i['content'], i['filename'])
+                            # self.check_if_ready(i['sender'], i['destination'],
+                            # i['timestamp'], i['content'], i['filename'])
+                            sock = socket()
+                            sock.bind(("0.0.0.0", 0))
+                            i['address'] = sock.getsockname()[0]
+                            i['port'] = sock.getsockname()[1]
+                            i['content'] = None
+                            print(i)
+                            threading.Thread(target=self.sender_daemon, args=(sock, i,)).start()
+                            self.factory.connections[packet['sender']].transport.write(get_transportable_data(i))
                         else:
                             i['content'] = i['content'].decode()
                             self.factory.connections[packet['sender']].transport.write(get_transportable_data(i))
@@ -144,26 +147,42 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
                 }
                 self.transport.write(get_transportable_data(reply))
 
+        elif packet['command'] == 'call':
+            try:
+                packet['address'] = self.factory.connections[packet['sender']].transport.getPeer().host
+                self.factory.connections[packet['destination']].transport.write(get_transportable_data(packet))
+            except KeyError:
+                reply = {
+                    'sender': 'SERVER',
+                    'command': 'call_fail'
+                }
+                self.transport.write(get_transportable_data(reply))
+
         elif packet['command'] == 'prepare_for_file':
             port = packet['port']
             sender_address = str(self.factory.connections[packet['sender']].transport.getPeer().host)
             chunk_size = 8 * 1024
 
             try:
-                t = self.factory.connections[packet['destination']].transport
+                transport = self.factory.connections[packet['destination']].transport
                 sock = socket()
                 sock.bind(("0.0.0.0", 0))
                 threading.Thread(target=self.forwarder_daemon, args=((sender_address, port), sock,)).start()
                 packet['port'] = sock.getsockname()[1]
-                t.write(get_transportable_data(packet))
+                transport.write(get_transportable_data(packet))
             except KeyError:
                 sock = socket()
                 sock.connect((sender_address, int(port)))
+                print(packet['filename'])
+
+                packet['filename'] = packet['filename'].replace('/', '[SLASH]')
+                packet['filename'] = packet['filename'].replace('\\', '[BACKSLASH]')
                 try:
-                    f = open(f"{exec_path}/.cache/{packet['filename']}", 'wb+')
+                    print(f"{path}/cache/{packet['filename']}")
+                    f = open(f"{path}/cache/{packet['filename']}", 'wb+')
                 except FileNotFoundError:
-                    makedirs(f'{exec_path}/.cache')
-                    f = open(f"{exec_path}/.cache/{packet['filename']}", 'wb+')
+                    makedirs(f'{path}/cache')
+                    f = open(f"{path}/cache/{packet['filename']}", 'wb+')
 
                 chunk = sock.recv(chunk_size)
                 while chunk:
@@ -199,20 +218,25 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
         chunk_size = 8 * 1024
 
         sock.listen()
-        sock.setblocking(False)
 
         outgoing = socket()
-        outgoing.connect(sender)
+        while True:
+            try:
+                outgoing.connect(sender)
+            except ConnectionRefusedError:
+                pass
+            else:
+                break
         print(f"Connected to sender! He is {outgoing.getpeername()}")
 
         while running:
             try:
-                client_socket, addr = sock.accept()
+                client_socket, address = sock.accept()
                 print(f"Connected to destination! He is {client_socket.getpeername()}")
             except BlockingIOError:
                 pass
             else:
-                start = time.time()
+                # start = time.time()
                 chunk = outgoing.recv(chunk_size)
                 while chunk:
                     client_socket.send(chunk)
@@ -220,21 +244,29 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
                 client_socket.close()
                 sock.close()
                 outgoing.close()
-                end = time.time()
+                # end = time.time()
                 return
         return
 
-    def check_if_ready(self, sender, peer, timestamp, data, filename):
-        packet = {
-            'sender': 'SERVER',
-            'destination': peer,
-            'command': 'prepare_for_file',
-            'original_sender': sender,
-            'timestamp': timestamp,
-            'filename': filename
-        }
-        self.factory.connections[peer].buffer = data
-        self.factory.connections[peer].transport.write(get_transportable_data(packet))
+    @staticmethod
+    def sender_daemon(sock, packet):
+        sock.listen()
+        while running:
+            try:
+                client_socket, address = sock.accept()
+                print(f"Connected to destination! He is {client_socket.getpeername()}")
+            except BlockingIOError:
+                pass
+            else:
+                # start = time.time()
+                with open(f"{path}/cache/{packet['filename']}", "rb") as f:
+                    client_socket.sendfile(f, 0)
+                sock.close()
+                client_socket.close()
+                # end = time.time()
+                os.remove(f.name)
+                return
+        return
 
     def dataReceived(self, data):
         data = data.split('\r\n'.encode())
@@ -249,7 +281,7 @@ class ServerFactory(Factory):
         self.connections = dict()
         self.mode = None
 
-    def buildProtocol(self, addr):
+    def buildProtocol(self, address):
         return Server(self)
 
 

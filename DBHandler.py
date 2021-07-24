@@ -6,7 +6,7 @@ import bcrypt
 from appdirs import user_data_dir
 from peewee import *
 
-path = user_data_dir("PenguChatServer", "aanas")
+path = user_data_dir("PenguChatServer")
 environ['KIVY_NO_ENV_CONFIG'] = '1'
 environ["KCFG_KIVY_LOG_LEVEL"] = "debug"
 environ["KCFG_KIVY_LOG_DIR"] = path + '/PenguChat/Logs'
@@ -14,8 +14,8 @@ environ["KCFG_KIVY_LOG_DIR"] = path + '/PenguChat/Logs'
 FORMAT = '%(asctime)-15s %(message)s'
 logging.basicConfig(format=FORMAT, level=logging.INFO)
 
-
 db = SqliteDatabase(path + '/Users.db')
+
 
 class User(Model):
     username = CharField(100)
@@ -90,6 +90,8 @@ def add_user(username, pwd, salt):
 
 
 def login(username, password):
+    if len(username) == 0 or len(password) == 0:
+        return False
     try:
         query = User.get(User.username == username)
     except User.DoesNotExist:
