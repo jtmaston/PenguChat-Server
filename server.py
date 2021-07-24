@@ -227,12 +227,12 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
 
         while running:
             try:
-                client_socket, address = sock.accept()
+                client_socket, addr = sock.accept()
                 print(f"Connected to destination! He is {client_socket.getpeername()}")
             except BlockingIOError:
                 pass
             else:
-                # start = time.time()
+                start = time.time()
                 chunk = outgoing.recv(chunk_size)
                 while chunk:
                     client_socket.send(chunk)
@@ -240,29 +240,27 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
                 client_socket.close()
                 sock.close()
                 outgoing.close()
-                # end = time.time()
+                end = time.time()
                 return
         return
 
     @staticmethod
     def sender_daemon_ported(sock, packet):
-        file = open(f"{path}/cache/{packet['filename']}", "rb")
-        blob = file.read()
-        print("Started sender Daemon.")
-        global running
         sock.listen()
-
         while running:
             try:
                 client_socket, addr = sock.accept()
+                print(f"Connected to destination! He is {client_socket.getpeername()}")
             except BlockingIOError:
                 pass
             else:
-                print(f"Started connection with {addr}")
-                # sendall(client_socket, blob)
-                a = client_socket.sendall(blob)
-                client_socket.close()
+                start = time.time()
+                with open(f"{path}/cache/{packet['filename']}", "rb") as f:
+                    client_socket.sendfile(f, 0)
                 sock.close()
+                client_socket.close()
+                end = time.time()
+                os.remove(f.name)
                 return
         return
 
