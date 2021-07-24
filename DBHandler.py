@@ -90,6 +90,8 @@ def add_user(username, pwd, salt):
 
 
 def login(username, password):
+    if len(username) == 0 or len(password) == 0:
+        return False
     try:
         query = User.get(User.username == username)
     except User.DoesNotExist:

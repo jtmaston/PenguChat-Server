@@ -147,6 +147,17 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
                 }
                 self.transport.write(get_transportable_data(reply))
 
+        elif packet['command'] == 'call':
+            try:
+                packet['address'] = self.factory.connections[packet['sender']].transport.getPeer().host
+                self.factory.connections[packet['destination']].transport.write(get_transportable_data(packet))
+            except KeyError:
+                reply = {
+                    'sender': 'SERVER',
+                    'command': 'call_fail'
+                }
+                self.transport.write(get_transportable_data(reply))
+
         elif packet['command'] == 'prepare_for_file':
             port = packet['port']
             sender_address = str(self.factory.connections[packet['sender']].transport.getPeer().host)
@@ -162,7 +173,12 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
             except KeyError:
                 sock = socket()
                 sock.connect((sender_address, int(port)))
+                print(packet['filename'])
+
+                packet['filename'] = packet['filename'].replace('/', '[SLASH]')
+                packet['filename'] = packet['filename'].replace('\\', '[BACKSLASH]')
                 try:
+                    print(f"{path}/cache/{packet['filename']}")
                     f = open(f"{path}/cache/{packet['filename']}", 'wb+')
                 except FileNotFoundError:
                     makedirs(f'{path}/cache')
