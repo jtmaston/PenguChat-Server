@@ -95,8 +95,7 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
                             i['address'] = sock.getsockname()[0]
                             i['port'] = sock.getsockname()[1]
                             i['content'] = None
-                            #threading.Thread(target=self.sender_daemon_ported, args=(sock, i,)).start()
-                            multiprocessing.Process(target=self.sender_daemon, args=(sock,i)).start()
+                            multiprocessing.Process(target=self.sender_daemon, args=(sock, i)).start()
                             self.factory.connections[packet['sender']].transport.write(get_transportable_data(i))
                         else:
                             i['content'] = i['content'].decode()
@@ -160,7 +159,7 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
         elif packet['command'] == 'prepare_for_file':
             port = packet['port']
             sender_address = str(self.factory.connections[packet['sender']].transport.getPeer().host)
-            chunk_size = 8 * 1024
+            chunk_size = 2 ** 32
 
             try:
                 transport = self.factory.connections[packet['destination']].transport
@@ -211,7 +210,7 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
     @staticmethod
     def forwarder_daemon(sender, sock):
         global running
-        chunk_size = 8 * 1024
+        chunk_size = 2 ** 29
 
         sock.listen()
 
@@ -245,27 +244,6 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
         return
 
     @staticmethod
-    def sender_daemon_ported(sock, packet):
-        sock.listen()
-        while running:
-            try:
-                client_socket, addr = sock.accept()
-                print(f"Connected to destination! He is {client_socket.getpeername()}")
-            except BlockingIOError:
-                pass
-            else:
-                start = time.time()
-                with open(f"{path}/cache/{packet['filename']}", "rb") as f:
-                    client_socket.sendfile(f, 0)
-                sock.close()
-                client_socket.close()
-                end = time.time()
-                os.remove(f.name)
-                return
-        return
-
-
-    @staticmethod
     def sender_daemon(sock, packet):
         sock.listen()
         while running:
@@ -276,7 +254,6 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
                 pass
             else:
                 start = time.time()
-                print((f"{path}/cache/{packet['filename']}"))
                 with open(f"{path}/cache/{packet['filename']}", "rb") as f:
                     client_socket.sendfile(f, 0)
                 sock.close()
