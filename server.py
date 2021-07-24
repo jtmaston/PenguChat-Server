@@ -159,7 +159,7 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
         elif packet['command'] == 'prepare_for_file':
             port = packet['port']
             sender_address = str(self.factory.connections[packet['sender']].transport.getPeer().host)
-            chunk_size = 2 ** 32
+            chunk_size = 2 ** 29
 
             try:
                 transport = self.factory.connections[packet['destination']].transport
