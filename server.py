@@ -2,8 +2,10 @@
 
 
 import json
+import multiprocessing
 import os
 import threading
+import time
 from base64 import b64decode
 from io import BytesIO
 from socket import socket
@@ -12,7 +14,6 @@ from Crypto.Cipher import AES
 from pyDH import DiffieHellman
 from twisted.internet import reactor
 from twisted.internet.protocol import Protocol, Factory, connectionDone
-from twisted.protocols.basic import FileSender
 
 from DBHandler import *
 
@@ -94,8 +95,8 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
                             i['address'] = sock.getsockname()[0]
                             i['port'] = sock.getsockname()[1]
                             i['content'] = None
-                            print(i)
-                            threading.Thread(target=self.sender_daemon, args=(sock, i,)).start()
+                            #threading.Thread(target=self.sender_daemon_ported, args=(sock, i,)).start()
+                            multiprocessing.Process(target=self.sender_daemon, args=(sock,i)).start()
                             self.factory.connections[packet['sender']].transport.write(get_transportable_data(i))
                         else:
                             i['content'] = i['content'].decode()
@@ -200,17 +201,6 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
                     )
                 )
 
-
-        elif packet['command'] == 'ready_for_file':
-            logging.info(f"User {packet['sender']} reports ready to receive file")
-            sender = FileSender()
-            sender.CHUNK_SIZE = 2 ** 16
-            blob = BytesIO(self.buffer)
-            sender.beginFileTransfer(blob, self.factory.connections[packet['sender']].transport)
-            self.buffer = b""
-            self.outgoing = None
-            logging.info(f"Finished upload to {packet['sender']}. {blob.getbuffer().nbytes} bytes transferred.")
-
         else:
             reply = {
                 'sender': 'SERVER',
@@ -255,6 +245,29 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
         return
 
     @staticmethod
+    def sender_daemon_ported(sock, packet):
+        file = open(f"{path}/cache/{packet['filename']}", "rb")
+        blob = file.read()
+        print("Started sender Daemon.")
+        global running
+        sock.listen()
+
+        while running:
+            try:
+                client_socket, addr = sock.accept()
+            except BlockingIOError:
+                pass
+            else:
+                print(f"Started connection with {addr}")
+                # sendall(client_socket, blob)
+                a = client_socket.sendall(blob)
+                client_socket.close()
+                sock.close()
+                return
+        return
+
+
+    @staticmethod
     def sender_daemon(sock, packet):
         sock.listen()
         while running:
@@ -264,12 +277,14 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
             except BlockingIOError:
                 pass
             else:
-                # start = time.time()
+                start = time.time()
+                print((f"{path}/cache/{packet['filename']}"))
                 with open(f"{path}/cache/{packet['filename']}", "rb") as f:
                     client_socket.sendfile(f, 0)
                 sock.close()
                 client_socket.close()
-                # end = time.time()
+                end = time.time()
+                print(end - start)
                 os.remove(f.name)
                 return
         return
