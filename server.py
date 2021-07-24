@@ -89,8 +89,6 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
                 if cached:
                     for i in cached:
                         if i['command'] == 'prepare_for_file':
-                            # self.check_if_ready(i['sender'], i['destination'],
-                            # i['timestamp'], i['content'], i['filename'])
                             sock = socket()
                             sock.bind(("0.0.0.0", 0))
                             i['address'] = sock.getsockname()[0]
@@ -171,10 +169,6 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
                 packet['port'] = sock.getsockname()[1]
                 transport.write(get_transportable_data(packet))
             except KeyError:
-                sock = socket()
-                sock.connect((sender_address, int(port)))
-                print(packet['filename'])
-
                 packet['filename'] = packet['filename'].replace('/', '[SLASH]')
                 packet['filename'] = packet['filename'].replace('\\', '[BACKSLASH]')
                 try:
@@ -184,6 +178,8 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
                     makedirs(f'{path}/cache')
                     f = open(f"{path}/cache/{packet['filename']}", 'wb+')
 
+                sock = socket()
+                sock.connect((sender_address, int(port)))
                 chunk = sock.recv(chunk_size)
                 while chunk:
                     f.write(chunk)
@@ -193,6 +189,16 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
 
                 packet['content'] = packet['filename']
                 add_message_to_cache(packet)
+                self.transport.write(
+                    get_transportable_data(
+                        {
+                            'sender': 'SERVER',
+                            'destination': packet['sender'],
+                            'command': 'file_done',
+                            'file_size': packet['file_size']
+                        }
+                    )
+                )
 
 
         elif packet['command'] == 'ready_for_file':
