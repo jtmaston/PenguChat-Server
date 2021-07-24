@@ -41,11 +41,6 @@ class MessageCache(Model):
         database = db
 
 
-def append_file_to_cache(packet, blob):
-    query = MessageCache.update({MessageCache.content: blob}).where(MessageCache.timestamp == packet['timestamp'])
-    query.execute()
-
-
 def add_message_to_cache(packet):
     try:
         content = packet['content']
@@ -57,10 +52,13 @@ def add_message_to_cache(packet):
     except KeyError:
         filename = ""
 
+    if not isinstance(content, bytes):
+        content = str(content).encode()
+
     MessageCache(
         sender=packet['sender'],
         destination=packet['destination'],
-        content=str(content).encode() if not isinstance(content, bytes) else content,
+        content=content,
         timestamp=packet['timestamp'],
         command=packet['command'],
         isfile=packet['isfile'],
