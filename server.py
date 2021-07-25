@@ -35,12 +35,13 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
         self.buffer = b""
         self.ready_to_receive = False
         self.daemons = []
-        signal.signal(signal.SIGINT, self.terminator())
+        signal.signal(signal.SIGINT, self.terminator)
 
     def terminator(self):
+        print("someone asked to kill")
         for process in self.daemons:
             process.kill()
-        sys.exit(0)
+        return
 
     def connectionMade(self):
         pass
