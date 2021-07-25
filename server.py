@@ -2,17 +2,16 @@
 
 
 import json
+import multiprocessing
 import os
-import threading
+import time
 from base64 import b64decode
-from io import BytesIO
 from socket import socket
 
 from Crypto.Cipher import AES
 from pyDH import DiffieHellman
 from twisted.internet import reactor
 from twisted.internet.protocol import Protocol, Factory, connectionDone
-from twisted.protocols.basic import FileSender
 
 from DBHandler import *
 
@@ -89,15 +88,12 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
                 if cached:
                     for i in cached:
                         if i['command'] == 'prepare_for_file':
-                            # self.check_if_ready(i['sender'], i['destination'],
-                            # i['timestamp'], i['content'], i['filename'])
                             sock = socket()
                             sock.bind(("0.0.0.0", 0))
                             i['address'] = sock.getsockname()[0]
                             i['port'] = sock.getsockname()[1]
                             i['content'] = None
-                            print(i)
-                            threading.Thread(target=self.sender_daemon, args=(sock, i,)).start()
+                            multiprocessing.Process(target=self.sender_daemon, args=(sock, i)).start()
                             self.factory.connections[packet['sender']].transport.write(get_transportable_data(i))
                         else:
                             i['content'] = i['content'].decode()
@@ -161,20 +157,16 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
         elif packet['command'] == 'prepare_for_file':
             port = packet['port']
             sender_address = str(self.factory.connections[packet['sender']].transport.getPeer().host)
-            chunk_size = 8 * 1024
+            chunk_size = 2 ** 29
 
             try:
                 transport = self.factory.connections[packet['destination']].transport
                 sock = socket()
                 sock.bind(("0.0.0.0", 0))
-                threading.Thread(target=self.forwarder_daemon, args=((sender_address, port), sock,)).start()
+                multiprocessing.Process(target=self.forwarder_daemon, args=((sender_address, port), sock,)).start()
                 packet['port'] = sock.getsockname()[1]
                 transport.write(get_transportable_data(packet))
             except KeyError:
-                sock = socket()
-                sock.connect((sender_address, int(port)))
-                print(packet['filename'])
-
                 packet['filename'] = packet['filename'].replace('/', '[SLASH]')
                 packet['filename'] = packet['filename'].replace('\\', '[BACKSLASH]')
                 try:
@@ -184,6 +176,8 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
                     makedirs(f'{path}/cache')
                     f = open(f"{path}/cache/{packet['filename']}", 'wb+')
 
+                sock = socket()
+                sock.connect((sender_address, int(port)))
                 chunk = sock.recv(chunk_size)
                 while chunk:
                     f.write(chunk)
@@ -193,17 +187,16 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
 
                 packet['content'] = packet['filename']
                 add_message_to_cache(packet)
-
-
-        elif packet['command'] == 'ready_for_file':
-            logging.info(f"User {packet['sender']} reports ready to receive file")
-            sender = FileSender()
-            sender.CHUNK_SIZE = 2 ** 16
-            blob = BytesIO(self.buffer)
-            sender.beginFileTransfer(blob, self.factory.connections[packet['sender']].transport)
-            self.buffer = b""
-            self.outgoing = None
-            logging.info(f"Finished upload to {packet['sender']}. {blob.getbuffer().nbytes} bytes transferred.")
+                self.transport.write(
+                    get_transportable_data(
+                        {
+                            'sender': 'SERVER',
+                            'destination': packet['sender'],
+                            'command': 'file_done',
+                            'file_size': packet['file_size']
+                        }
+                    )
+                )
 
         else:
             reply = {
@@ -215,7 +208,7 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
     @staticmethod
     def forwarder_daemon(sender, sock):
         global running
-        chunk_size = 8 * 1024
+        chunk_size = 2 ** 29
 
         sock.listen()
 
@@ -231,12 +224,12 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
 
         while running:
             try:
-                client_socket, address = sock.accept()
+                client_socket, addr = sock.accept()
                 print(f"Connected to destination! He is {client_socket.getpeername()}")
             except BlockingIOError:
                 pass
             else:
-                # start = time.time()
+                start = time.time()
                 chunk = outgoing.recv(chunk_size)
                 while chunk:
                     client_socket.send(chunk)
@@ -244,7 +237,7 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
                 client_socket.close()
                 sock.close()
                 outgoing.close()
-                # end = time.time()
+                end = time.time()
                 return
         return
 
@@ -258,12 +251,13 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
             except BlockingIOError:
                 pass
             else:
-                # start = time.time()
+                start = time.time()
                 with open(f"{path}/cache/{packet['filename']}", "rb") as f:
                     client_socket.sendfile(f, 0)
                 sock.close()
                 client_socket.close()
-                # end = time.time()
+                end = time.time()
+                print(end - start)
                 os.remove(f.name)
                 return
         return
