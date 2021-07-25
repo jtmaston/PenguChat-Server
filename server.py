@@ -4,6 +4,8 @@
 import json
 import multiprocessing
 import os
+import signal
+import sys
 import time
 from base64 import b64decode
 from socket import socket
@@ -32,6 +34,13 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
         self.outgoing = None
         self.buffer = b""
         self.ready_to_receive = False
+        self.daemons = []
+        signal.signal(signal.SIGINT, self.terminator())
+
+    def terminator(self):
+        for process in self.daemons:
+            process.kill()
+        sys.exit(0)
 
     def connectionMade(self):
         pass
@@ -93,7 +102,9 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
                             i['address'] = sock.getsockname()[0]
                             i['port'] = sock.getsockname()[1]
                             i['content'] = None
-                            multiprocessing.Process(target=self.sender_daemon, args=(sock, i)).start()
+                            p = multiprocessing.Process(target=self.sender_daemon, args=(sock, i))
+                            #self.daemons.append(p)
+                            p.start()
                             self.factory.connections[packet['sender']].transport.write(get_transportable_data(i))
                         else:
                             i['content'] = i['content'].decode()
@@ -157,53 +168,61 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
         elif packet['command'] == 'prepare_for_file':
             port = packet['port']
             sender_address = str(self.factory.connections[packet['sender']].transport.getPeer().host)
-            chunk_size = 2 ** 29
 
             try:
                 transport = self.factory.connections[packet['destination']].transport
                 sock = socket()
                 sock.bind(("0.0.0.0", 0))
-                multiprocessing.Process(target=self.forwarder_daemon, args=((sender_address, port), sock,)).start()
+                p = multiprocessing.Process(target=self.forwarder_daemon, args=((sender_address, port), sock,))
+                #self.daemons.append(p)
+                p.start()
                 packet['port'] = sock.getsockname()[1]
                 transport.write(get_transportable_data(packet))
             except KeyError:
-                packet['filename'] = packet['filename'].replace('/', '[SLASH]')
-                packet['filename'] = packet['filename'].replace('\\', '[BACKSLASH]')
-                try:
-                    print(f"{path}/cache/{packet['filename']}")
-                    f = open(f"{path}/cache/{packet['filename']}", 'wb+')
-                except FileNotFoundError:
-                    makedirs(f'{path}/cache')
-                    f = open(f"{path}/cache/{packet['filename']}", 'wb+')
-
-                sock = socket()
-                sock.connect((sender_address, int(port)))
-                chunk = sock.recv(chunk_size)
-                while chunk:
-                    f.write(chunk)
-                    chunk = sock.recv(chunk_size)
-                sock.close()
-                packet['isfile'] = True
-
-                packet['content'] = packet['filename']
-                add_message_to_cache(packet)
-                self.transport.write(
-                    get_transportable_data(
-                        {
-                            'sender': 'SERVER',
-                            'destination': packet['sender'],
-                            'command': 'file_done',
-                            'file_size': packet['file_size']
-                        }
-                    )
+                p = multiprocessing.Process(
+                    target=self.receiver_daemon, args=(packet, sender_address, port, self.transport, )
                 )
-
+                #self.daemons.append(p)
         else:
             reply = {
                 'sender': 'SERVER',
                 'command': '400'
             }
             self.transport.write(get_transportable_data(reply))
+
+    @staticmethod
+    def receiver_daemon(packet, sender_address, port, transport):
+        chunk_size = 2 ** 29
+        packet['filename'] = packet['filename'].replace('/', '[SLASH]')
+        packet['filename'] = packet['filename'].replace('\\', '[BACKSLASH]')
+        try:
+            print(f"{path}/cache/{packet['filename']}")
+            f = open(f"{path}/cache/{packet['filename']}", 'wb+')
+        except FileNotFoundError:
+            makedirs(f'{path}/cache')
+            f = open(f"{path}/cache/{packet['filename']}", 'wb+')
+
+        sock = socket()
+        sock.connect((sender_address, int(port)))
+        chunk = sock.recv(chunk_size)
+        while chunk:
+            f.write(chunk)
+            chunk = sock.recv(chunk_size)
+        sock.close()
+        packet['isfile'] = True
+
+        packet['content'] = packet['filename']
+        add_message_to_cache(packet)
+        transport.write(
+            get_transportable_data(
+                {
+                    'sender': 'SERVER',
+                    'destination': packet['sender'],
+                    'command': 'file_done',
+                    'file_size': packet['file_size']
+                }
+            )
+        )
 
     @staticmethod
     def forwarder_daemon(sender, sock):
