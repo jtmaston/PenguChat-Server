@@ -4,10 +4,8 @@
 import json
 import multiprocessing
 import os
-import threading
 import time
 from base64 import b64decode
-from io import BytesIO
 from socket import socket
 
 from Crypto.Cipher import AES
@@ -165,7 +163,7 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
                 transport = self.factory.connections[packet['destination']].transport
                 sock = socket()
                 sock.bind(("0.0.0.0", 0))
-                threading.Thread(target=self.forwarder_daemon, args=((sender_address, port), sock,)).start()
+                multiprocessing.Process(target=self.forwarder_daemon, args=((sender_address, port), sock,)).start()
                 packet['port'] = sock.getsockname()[1]
                 transport.write(get_transportable_data(packet))
             except KeyError:
