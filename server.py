@@ -184,6 +184,7 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
                     target=self.receiver_daemon, args=(packet, sender_address, port, self.transport, )
                 )
                 self.daemons.append(p)
+                p.start()
         else:
             reply = {
                 'sender': 'SERVER',
@@ -204,6 +205,7 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
             f = open(f"{path}/cache/{packet['filename']}", 'wb+')
 
         sock = socket()
+        print(sender_address, port)
         sock.connect((sender_address, int(port)))
         chunk = sock.recv(chunk_size)
         while chunk:
