@@ -8,6 +8,7 @@ import signal
 import sys
 import time
 from base64 import b64decode
+from math import floor
 from socket import socket
 
 from Crypto.Cipher import AES
@@ -36,6 +37,10 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
         self.ready_to_receive = False
         self.daemons = []
         signal.signal(signal.SIGINT, self.terminator)
+
+    def ack(self, packet, speed):
+        self.factory.connections[packet['sender']].transport.write("a".encode())
+        print(self.transport)
 
     def terminator(self):
         print("someone asked to kill")
@@ -181,7 +186,7 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
                 transport.write(get_transportable_data(packet))
             except KeyError:
                 p = multiprocessing.Process(
-                    target=self.receiver_daemon, args=(packet, sender_address, port, self.transport, )
+                    target=self.receiver_daemon, args=(packet, sender_address, port, self.ack, )
                 )
                 self.daemons.append(p)
                 p.start()
@@ -193,7 +198,7 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
             self.transport.write(get_transportable_data(reply))
 
     @staticmethod
-    def receiver_daemon(packet, sender_address, port, transport):
+    def receiver_daemon(packet, sender_address, port, callback):
         chunk_size = 2 ** 29
         packet['filename'] = packet['filename'].replace('/', '[SLASH]')
         packet['filename'] = packet['filename'].replace('\\', '[BACKSLASH]')
@@ -207,25 +212,20 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
         sock = socket()
         print(sender_address, port)
         sock.connect((sender_address, int(port)))
+        start = time.time()
         chunk = sock.recv(chunk_size)
         while chunk:
             f.write(chunk)
             chunk = sock.recv(chunk_size)
         sock.close()
+        end = time.time()
         packet['isfile'] = True
-
+        speed = floor(packet['file_size'] / 1000000 / (end - start + 0.01) * 8)
+        print(
+            f"Transfer rate is {speed} mbps")
         packet['content'] = packet['filename']
         add_message_to_cache(packet)
-        transport.write(
-            get_transportable_data(
-                {
-                    'sender': 'SERVER',
-                    'destination': packet['sender'],
-                    'command': 'file_done',
-                    'file_size': packet['file_size']
-                }
-            )
-        )
+        callback(packet, speed)
 
     @staticmethod
     def forwarder_daemon(sender, sock):
