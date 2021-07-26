@@ -2,21 +2,28 @@
 
 
 import json
+import multiprocessing
+import os
+import signal
+import sys
+import time
 from base64 import b64decode
+from math import floor
+from socket import socket
 
 from Crypto.Cipher import AES
 from pyDH import DiffieHellman
 from twisted.internet import reactor
 from twisted.internet.protocol import Protocol, Factory, connectionDone
-from sys import getsizeof
-from io import BytesIO
-from twisted.protocols.basic import FileSender
-from twisted.internet.defer import Deferred
+
 from DBHandler import *
 
 
-def get_transportable_data(packet):  # helper method to get a transportable version of non-encoded data
+def get_transportable_data(packet) -> bytes:  # helper method to get a transportable version of non-encoded data
     return json.dumps(packet).encode()
+
+
+running = True
 
 
 class Server(Protocol):  # describes the protocol. compared to the client, the server has relatively little to do
@@ -28,6 +35,18 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
         self.outgoing = None
         self.buffer = b""
         self.ready_to_receive = False
+        self.daemons = []
+        signal.signal(signal.SIGINT, self.terminator)
+
+    def ack(self, packet, speed):
+        self.factory.connections[packet['sender']].transport.write("a".encode())
+        print(self.transport)
+
+    def terminator(self):
+        print("someone asked to kill")
+        for process in self.daemons:
+            process.kill()
+        return
 
     def connectionMade(self):
         pass
@@ -41,6 +60,7 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
                 pass
             self.endpoint_username = None
 
+    # noinspection PyArgumentList
     def decode_command(self, data):
         try:
             packet = json.loads(data)
@@ -71,7 +91,7 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
             password = cipher.decrypt_and_verify(encrypted, tag)
             if login(packet['sender'], password):
                 try:
-                    t = self.factory.connections[packet['sender']]
+                    self.factory.connections[packet['sender']]
                 except KeyError:
                     pass
                 else:
@@ -83,8 +103,15 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
                 if cached:
                     for i in cached:
                         if i['command'] == 'prepare_for_file':
-                            self.check_if_ready(i['sender'], i['destination'],
-                                                i['timestamp'], i['content'], i['filename'])
+                            sock = socket()
+                            sock.bind(("0.0.0.0", 0))
+                            i['address'] = sock.getsockname()[0]
+                            i['port'] = sock.getsockname()[1]
+                            i['content'] = None
+                            p = multiprocessing.Process(target=self.sender_daemon, args=(sock, i))
+                            self.daemons.append(p)
+                            p.start()
+                            self.factory.connections[packet['sender']].transport.write(get_transportable_data(i))
                         else:
                             i['content'] = i['content'].decode()
                             self.factory.connections[packet['sender']].transport.write(get_transportable_data(i))
@@ -133,35 +160,36 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
                 }
                 self.transport.write(get_transportable_data(reply))
 
-        elif packet['command'] == 'prepare_for_file':
-            reply = {
-                'sender': 'SERVER',
-                'command': 'ready_for_file',
-                'original_sender': packet['sender'],
-                'original_destination': packet['destination'],
-                'timestamp': packet['timestamp'],
-            }
-            logging.info(f"Switching to file transfer mode for user {self.endpoint_username}")
-            self.receiving_file = True
-            packet['isfile'] = True
+        elif packet['command'] == 'call':
             try:
-                self.factory.connections[packet['destination']].outgoing = packet
+                packet['address'] = self.factory.connections[packet['sender']].transport.getPeer().host
+                self.factory.connections[packet['destination']].transport.write(get_transportable_data(packet))
             except KeyError:
-                add_message_to_cache(packet)
+                reply = {
+                    'sender': 'SERVER',
+                    'command': 'call_fail'
+                }
+                self.transport.write(get_transportable_data(reply))
 
-            self.outgoing = packet
-            self.transport.write(get_transportable_data(reply))
+        elif packet['command'] == 'prepare_for_file':
+            port = packet['port']
+            sender_address = str(self.factory.connections[packet['sender']].transport.getPeer().host)
 
-        elif packet['command'] == 'ready_for_file':
-            logging.info(f"User {packet['sender']} reports ready to receive file")
-            sender = FileSender()
-            sender.CHUNK_SIZE = 2 ** 16
-            blob = BytesIO(self.buffer)
-            sender.beginFileTransfer(blob, self.factory.connections[packet['sender']].transport)
-            self.buffer = b""
-            self.outgoing = None
-            logging.info(f"Finished upload to {packet['sender']}. {blob.getbuffer().nbytes} bytes transferred.")
-
+            try:
+                transport = self.factory.connections[packet['destination']].transport
+                sock = socket()
+                sock.bind(("0.0.0.0", 0))
+                p = multiprocessing.Process(target=self.forwarder_daemon, args=((sender_address, port), sock,))
+                self.daemons.append(p)
+                p.start()
+                packet['port'] = sock.getsockname()[1]
+                transport.write(get_transportable_data(packet))
+            except KeyError:
+                p = multiprocessing.Process(
+                    target=self.receiver_daemon, args=(packet, sender_address, port, self.ack, )
+                )
+                self.daemons.append(p)
+                p.start()
         else:
             reply = {
                 'sender': 'SERVER',
@@ -169,42 +197,99 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
             }
             self.transport.write(get_transportable_data(reply))
 
-    def check_if_ready(self, sender, peer, timestamp, data, filename):
-        packet = {
-            'sender': 'SERVER',
-            'destination': peer,
-            'command': 'prepare_for_file',
-            'original_sender': sender,
-            'timestamp': timestamp,
-            'filename': filename
-        }
-        self.factory.connections[peer].buffer = data
-        self.factory.connections[peer].transport.write(get_transportable_data(packet))
+    @staticmethod
+    def receiver_daemon(packet, sender_address, port, callback):
+        chunk_size = 2 ** 29
+        packet['filename'] = packet['filename'].replace('/', '[SLASH]')
+        packet['filename'] = packet['filename'].replace('\\', '[BACKSLASH]')
+        try:
+            print(f"{path}/cache/{packet['filename']}")
+            f = open(f"{path}/cache/{packet['filename']}", 'wb+')
+        except FileNotFoundError:
+            makedirs(f'{path}/cache')
+            f = open(f"{path}/cache/{packet['filename']}", 'wb+')
+
+        sock = socket()
+        print(sender_address, port)
+        sock.connect((sender_address, int(port)))
+        start = time.time()
+        chunk = sock.recv(chunk_size)
+        while chunk:
+            f.write(chunk)
+            chunk = sock.recv(chunk_size)
+        sock.close()
+        end = time.time()
+        packet['isfile'] = True
+        speed = floor(packet['file_size'] / 1000000 / (end - start + 0.01) * 8)
+        print(
+            f"Transfer rate is {speed} mbps")
+        packet['content'] = packet['filename']
+        add_message_to_cache(packet)
+        callback(packet, speed)
+
+    @staticmethod
+    def forwarder_daemon(sender, sock):
+        global running
+        chunk_size = 2 ** 29
+
+        sock.listen()
+
+        outgoing = socket()
+        while True:
+            try:
+                outgoing.connect(sender)
+            except ConnectionRefusedError:
+                pass
+            else:
+                break
+        print(f"Connected to sender! He is {outgoing.getpeername()}")
+
+        while running:
+            try:
+                client_socket, addr = sock.accept()
+                print(f"Connected to destination! He is {client_socket.getpeername()}")
+            except BlockingIOError:
+                pass
+            else:
+                start = time.time()
+                chunk = outgoing.recv(chunk_size)
+                while chunk:
+                    client_socket.send(chunk)
+                    chunk = outgoing.recv(chunk_size)
+                client_socket.close()
+                sock.close()
+                outgoing.close()
+                end = time.time()
+                return
+        return
+
+    @staticmethod
+    def sender_daemon(sock, packet):
+        sock.listen()
+        while running:
+            try:
+                client_socket, address = sock.accept()
+                print(f"Connected to destination! He is {client_socket.getpeername()}")
+            except BlockingIOError:
+                pass
+            else:
+                start = time.time()
+                with open(f"{path}/cache/{packet['filename']}", "rb") as f:
+                    client_socket.sendfile(f, 0)
+                sock.close()
+                client_socket.close()
+                end = time.time()
+                print(end - start)
+                os.remove(f.name)
+                return
+        return
 
     def dataReceived(self, data):
-        if not self.receiving_file:
-            data = data.split('\r\n'.encode())
-            logging.info(data)
-            for message in data:
-                if message:
-                    self.decode_command(message)
-        else:
-            self.buffer += data
-            if self.buffer[-2:] == '\r\n'.encode():
-                logging.info(f"{self.endpoint_username} finished upload. {getsizeof(self.buffer)} bytes received.")
-                self.receiving_file = False
-                reply = {
-                    'command': 'file_received',
-                    'sender': 'SERVER'
-                }
-                self.transport.write(get_transportable_data(reply))
-                try:
-                    t = self.factory.connections[self.outgoing['destination']]
-                    self.check_if_ready(self.outgoing['sender'], self.outgoing['destination'],
-                                        self.outgoing['timestamp'], self.buffer, self.outgoing['filename'])
-                except KeyError:
-                    append_file_to_cache(self.outgoing, self.buffer)
-                self.buffer = b""
+        data = data.split('\r\n'.encode())
+        logging.info(data)
+        for message in data:
+            if message:
+                self.decode_command(message)
 
 
 class ServerFactory(Factory):
@@ -212,7 +297,7 @@ class ServerFactory(Factory):
         self.connections = dict()
         self.mode = None
 
-    def buildProtocol(self, addr):
+    def buildProtocol(self, address):
         return Server(self)
 
 

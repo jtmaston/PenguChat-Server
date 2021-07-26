@@ -6,12 +6,16 @@ import bcrypt
 from appdirs import user_data_dir
 from peewee import *
 
-path = user_data_dir("PenguChatServer", "aanas")
+path = user_data_dir("PenguChatServer")
 environ['KIVY_NO_ENV_CONFIG'] = '1'
 environ["KCFG_KIVY_LOG_LEVEL"] = "debug"
 environ["KCFG_KIVY_LOG_DIR"] = path + '/PenguChat/Logs'
 
+FORMAT = '%(asctime)-15s %(message)s'
+logging.basicConfig(format=FORMAT, level=logging.INFO)
+
 db = SqliteDatabase(path + '/Users.db')
+
 
 class User(Model):
     username = CharField(100)
@@ -37,11 +41,6 @@ class MessageCache(Model):
         database = db
 
 
-def append_file_to_cache(packet, blob):
-    query = MessageCache.update({MessageCache.content: blob}).where(MessageCache.timestamp == packet['timestamp'])
-    query.execute()
-
-
 def add_message_to_cache(packet):
     try:
         content = packet['content']
@@ -52,6 +51,9 @@ def add_message_to_cache(packet):
         filename = packet['filename']
     except KeyError:
         filename = ""
+
+    if not isinstance(content, bytes):
+        content = str(content).encode()
 
     MessageCache(
         sender=packet['sender'],
@@ -86,6 +88,8 @@ def add_user(username, pwd, salt):
 
 
 def login(username, password):
+    if len(username) == 0 or len(password) == 0:
+        return False
     try:
         query = User.get(User.username == username)
     except User.DoesNotExist:
