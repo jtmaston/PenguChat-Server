@@ -41,9 +41,10 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
     def ack(self, packet, speed):
         self.factory.connections[packet['sender']].transport.write("a".encode())
 
-    def terminator(self):
+    def terminator(self, *args, **kwargs):
         for process in self.daemons:
             process.kill()
+        reactor.stop()
         return
 
     def connectionMade(self):
@@ -215,6 +216,7 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
         while chunk:
             f.write(chunk)
             chunk = sock.recv(chunk_size)
+        sock.send("OK".encode())
         sock.close()
         end = time.time()
         packet['isfile'] = True
