@@ -201,14 +201,14 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
         packet['filename'] = packet['filename'].replace('/', '[SLASH]')
         packet['filename'] = packet['filename'].replace('\\', '[BACKSLASH]')
         try:
-            print(f"{path}/cache/{packet['filename']}")
+            # print(f"{path}/cache/{packet['filename']}")
             f = open(f"{path}/cache/{packet['filename']}", 'wb+')
         except FileNotFoundError:
             makedirs(f'{path}/cache')
             f = open(f"{path}/cache/{packet['filename']}", 'wb+')
 
         sock = socket()
-        print(sender_address, port)
+        # print(sender_address, port)
         sock.connect((sender_address, int(port)))
         start = time.time()
         chunk = sock.recv(chunk_size)
