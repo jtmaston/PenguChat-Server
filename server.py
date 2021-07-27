@@ -40,10 +40,8 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
 
     def ack(self, packet, speed):
         self.factory.connections[packet['sender']].transport.write("a".encode())
-        print(self.transport)
 
     def terminator(self):
-        print("someone asked to kill")
         for process in self.daemons:
             process.kill()
         return
@@ -279,7 +277,7 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
                 sock.close()
                 client_socket.close()
                 end = time.time()
-                print(end - start)
+                # print(end - start)
                 os.remove(f.name)
                 return
         return
