@@ -8,12 +8,13 @@ import signal
 import sys
 import time
 from base64 import b64decode
+from functools import partial
 from math import floor
 from socket import socket
 
 from Crypto.Cipher import AES
 from pyDH import DiffieHellman
-from twisted.internet import reactor
+from twisted.internet import reactor, task
 from twisted.internet.protocol import Protocol, Factory, connectionDone
 
 from DBHandler import *
@@ -35,15 +36,29 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
         self.outgoing = None
         self.buffer = b""
         self.ready_to_receive = False
-        self.daemons = []
+        self.daemons = dict()
         signal.signal(signal.SIGINT, self.terminator)
+        tas = task.LoopingCall(partial(self.clean_up, self))
+        tas.start(0.5)
 
     def ack(self, packet, speed):
         self.factory.connections[packet['sender']].transport.write("a".encode())
 
+    def clean_up(self, *args, **kwargs):                    # this should help memory management
+        tbr = []
+        for pid, daemon in self.daemons.items():
+            if not daemon.is_alive():
+                tbr.append(pid)
+                # print(f"Scheduled {pid} for removal.")
+            # else:
+            # print(f"{pid} is still alive.")
+        for pid in tbr:
+            self.daemons.pop(pid)
+        # print(f"No of active daemons: {len(self.daemons)}")
+
     def terminator(self, *args, **kwargs):
-        for process in self.daemons:
-            process.kill()
+        for pid, daemon in self.daemons.items():
+            daemon.kill()
         reactor.stop()
         return
 
@@ -108,8 +123,8 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
                             i['port'] = sock.getsockname()[1]
                             i['content'] = None
                             p = multiprocessing.Process(target=self.sender_daemon, args=(sock, i))
-                            self.daemons.append(p)
                             p.start()
+                            self.daemons[p.pid] = p
                             self.factory.connections[packet['sender']].transport.write(get_transportable_data(i))
                         else:
                             i['content'] = i['content'].decode()
@@ -179,16 +194,16 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
                 sock = socket()
                 sock.bind(("0.0.0.0", 0))
                 p = multiprocessing.Process(target=self.forwarder_daemon, args=((sender_address, port), sock,))
-                self.daemons.append(p)
                 p.start()
+                self.daemons[p.pid] = p
                 packet['port'] = sock.getsockname()[1]
                 transport.write(get_transportable_data(packet))
             except KeyError:
                 p = multiprocessing.Process(
-                    target=self.receiver_daemon, args=(packet, sender_address, port, self.ack, )
+                    target=self.receiver_daemon, args=(packet, sender_address, port, self.ack,)
                 )
-                self.daemons.append(p)
                 p.start()
+                self.daemons[p.pid] = p
         else:
             reply = {
                 'sender': 'SERVER',
@@ -216,7 +231,6 @@ class Server(Protocol):  # describes the protocol. compared to the client, the s
         while chunk:
             f.write(chunk)
             chunk = sock.recv(chunk_size)
-        sock.send("OK".encode())
         sock.close()
         end = time.time()
         packet['isfile'] = True
